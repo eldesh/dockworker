@@ -1,6 +1,5 @@
 use std::fs::File;
 use std::path::Path;
-use std::result;
 
 use http::header::HeaderMap;
 use http::Request;
@@ -9,7 +8,7 @@ use hyper::rt::Stream;
 use hyper::Uri;
 pub use hyperx::header::{ContentType, Headers};
 
-use errors::*;
+use errors::{Error, Result};
 use http_client::HttpClient;
 
 use std::io::Read;
@@ -146,7 +145,7 @@ pub struct HyperClient {
 
 fn join_uri(uri: &Uri, path: &str) -> Result<Uri> {
     let joined = format!("{}{}", uri.to_string(), path);
-    Ok(Uri::from_str(&joined).context(ErrorKind::InvalidUri { var: joined })?)
+    Ok(Uri::from_str(&joined)?)
 }
 
 fn request_builder(method: &http::Method, uri: &Uri, headers: &Headers) -> http::request::Builder {
@@ -168,15 +167,17 @@ fn with_redirect<T: Into<hyper::Body> + Sync + Send + 'static + Clone>(
     body: Option<T>,
     future: hyper::client::ResponseFuture,
 ) -> Box<
-    hyper::rt::Future<Item = hyper::Response<hyper::Body>, Error = hyper::error::Error>
+    dyn hyper::rt::Future<Item = hyper::Response<hyper::Body>, Error = hyper::error::Error>
         + Send
         + 'static,
 > {
     if max_redirects == 0 {
         Box::new(future)
             as Box<
-                hyper::rt::Future<Item = hyper::Response<hyper::Body>, Error = hyper::error::Error>
-                    + Send
+                dyn hyper::rt::Future<
+                        Item = hyper::Response<hyper::Body>,
+                        Error = hyper::error::Error,
+                    > + Send
                     + 'static,
             >
     } else {
@@ -187,7 +188,7 @@ fn with_redirect<T: Into<hyper::Body> + Sync + Send + 'static + Clone>(
             if !res.status().is_redirection() || res.headers().get("Location").is_none() {
                 Box::new(Ok(res).into_future())
                     as Box<
-                        hyper::rt::Future<
+                        dyn hyper::rt::Future<
                                 Item = hyper::Response<hyper::Body>,
                                 Error = hyper::error::Error,
                             > + Send
@@ -236,8 +237,10 @@ fn with_redirect<T: Into<hyper::Body> + Sync + Send + 'static + Clone>(
             }
         }))
             as Box<
-                hyper::rt::Future<Item = hyper::Response<hyper::Body>, Error = hyper::error::Error>
-                    + Send
+                dyn hyper::rt::Future<
+                        Item = hyper::Response<hyper::Body>,
+                        Error = hyper::error::Error,
+                    > + Send
                     + 'static,
             >
     }
@@ -251,7 +254,7 @@ fn request_with_redirect<T: Into<hyper::Body> + Sync + Send + 'static + Clone>(
     body: Option<T>,
 ) -> Result<
     Box<
-        hyper::rt::Future<Item = hyper::Response<hyper::Body>, Error = hyper::error::Error>
+        dyn hyper::rt::Future<Item = hyper::Response<hyper::Body>, Error = hyper::error::Error>
             + Send
             + 'static,
     >,
@@ -287,12 +290,7 @@ impl HyperClient {
     }
 
     #[cfg(feature = "openssl")]
-    pub fn connect_with_ssl(
-        addr: &str,
-        key: &Path,
-        cert: &Path,
-        ca: &Path,
-    ) -> result::Result<Self, Error> {
+    pub fn connect_with_ssl(addr: &str, key: &Path, cert: &Path, ca: &Path) -> Result<Self, Error> {
         let mut key_buf = Vec::new();
         let mut cert_buf = Vec::new();
         let mut ca_buf = Vec::new();
@@ -317,7 +315,7 @@ impl HyperClient {
         builder.add_root_certificate(ca);
         // This ensures that using docker-machine-esque addresses work with Hyper.
         let addr_https = addr.clone().replacen("tcp://", "https://", 1);
-        let url = Uri::from_str(&addr_https).context(ErrorKind::InvalidUri { var: addr_https })?;
+        let url = Uri::from_str(&addr_https)?;
         let mut http = hyper::client::HttpConnector::new(4);
         http.enforce_http(false);
         let https = hyper_tls::HttpsConnector::from((http, builder.build()?));
@@ -325,10 +323,10 @@ impl HyperClient {
         Ok(Self::new(Client::HttpsClient(client), url))
     }
 
-    pub fn connect_with_http(addr: &str) -> result::Result<Self, Error> {
+    pub fn connect_with_http(addr: &str) -> Result<Self> {
         // This ensures that using docker-machine-esque addresses work with Hyper.
         let addr_https = addr.clone().replace("tcp://", "http://");
-        let url = Uri::from_str(&addr_https).context(ErrorKind::InvalidUri { var: addr_https })?;
+        let url = Uri::from_str(&addr_https)?;
         Ok(Self::new(Client::HttpClient(hyper::Client::new()), url))
     }
 }
@@ -336,7 +334,7 @@ impl HyperClient {
 impl HttpClient for HyperClient {
     type Err = Error;
 
-    fn get(&self, headers: &Headers, path: &str) -> result::Result<Response, Self::Err> {
+    fn get(&self, headers: &Headers, path: &str) -> Result<Response> {
         let url = join_uri(&self.base, path)?;
 
         let res = self
@@ -354,7 +352,7 @@ impl HttpClient for HyperClient {
         Ok(Response::new(res))
     }
 
-    fn head(&self, headers: &Headers, path: &str) -> result::Result<HeaderMap, Self::Err> {
+    fn head(&self, headers: &Headers, path: &str) -> Result<HeaderMap> {
         let url = join_uri(&self.base, path)?;
 
         let res = self
@@ -372,12 +370,7 @@ impl HttpClient for HyperClient {
         Ok(res.headers().clone())
     }
 
-    fn post(
-        &self,
-        headers: &Headers,
-        path: &str,
-        body: &str,
-    ) -> result::Result<Response, Self::Err> {
+    fn post(&self, headers: &Headers, path: &str, body: &str) -> Result<Response> {
         let url = join_uri(&self.base, path)?;
 
         let res = self
@@ -395,7 +388,7 @@ impl HttpClient for HyperClient {
         Ok(Response::new(res))
     }
 
-    fn delete(&self, headers: &Headers, path: &str) -> result::Result<Response, Self::Err> {
+    fn delete(&self, headers: &Headers, path: &str) -> Result<Response> {
         let url = join_uri(&self.base, path)?;
 
         let res = self
@@ -413,12 +406,7 @@ impl HttpClient for HyperClient {
         Ok(Response::new(res))
     }
 
-    fn post_file(
-        &self,
-        headers: &Headers,
-        path: &str,
-        file: &Path,
-    ) -> result::Result<Response, Self::Err> {
+    fn post_file(&self, headers: &Headers, path: &str, file: &Path) -> Result<Response> {
         let mut content = File::open(file)?;
         let url = join_uri(&self.base, path)?;
 
@@ -440,12 +428,7 @@ impl HttpClient for HyperClient {
         Ok(Response::new(res))
     }
 
-    fn put_file(
-        &self,
-        headers: &Headers,
-        path: &str,
-        file: &Path,
-    ) -> result::Result<Response, Self::Err> {
+    fn put_file(&self, headers: &Headers, path: &str, file: &Path) -> Result<Response> {
         let mut content = File::open(file)?;
         let url = join_uri(&self.base, path)?;
 

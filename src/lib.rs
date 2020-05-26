@@ -6,7 +6,6 @@
 extern crate base64;
 extern crate byteorder;
 extern crate chrono;
-extern crate failure;
 extern crate futures;
 extern crate http;
 extern crate hyper;
@@ -15,6 +14,7 @@ extern crate hyper_tls;
 #[cfg(unix)]
 extern crate hyperlocal;
 extern crate hyperx;
+extern crate thiserror;
 #[macro_use]
 extern crate log;
 extern crate mime;
